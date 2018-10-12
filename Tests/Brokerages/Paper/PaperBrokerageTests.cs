@@ -84,8 +84,9 @@ namespace QuantConnect.Tests.Brokerages.Paper
             var algorithm = new AlgorithmStub();
             algorithm.SetLiveMode(true);
             var dividend = new Dividend(Symbols.SPY, DateTime.UtcNow, 10m, 100m);
-            var feed = new TestDividendDataFeed(algorithm, dividend);
+            var feed = new TestDividendDataFeed();
             var dataManager = new DataManager(feed, new UniverseSelection(feed, algorithm), algorithm.Settings, algorithm.TimeKeeper);
+            var synchronizer = new NullSynchronizer(algorithm, dividend);
             algorithm.SubscriptionManager.SetDataManager(dataManager);
             algorithm.AddSecurities(equities: new List<string> {"SPY"});
             algorithm.Securities[Symbols.SPY].Holdings.SetHoldings(100m, 1);
@@ -114,6 +115,7 @@ namespace QuantConnect.Tests.Brokerages.Paper
             manager.Run(job,
                 algorithm,
                 dataManager,
+                synchronizer,
                 transactions,
                 results,
                 new BacktestingRealTimeHandler(),
@@ -129,36 +131,6 @@ namespace QuantConnect.Tests.Brokerages.Paper
 
         class TestDividendDataFeed : IDataFeed
         {
-            private readonly IAlgorithm _algorithm;
-            private readonly Dividend _dividend;
-            private readonly Symbol _symbol;
-
-            public TestDividendDataFeed(IAlgorithm algorithm, Dividend dividend)
-            {
-                _algorithm = algorithm;
-                _dividend = dividend;
-                _symbol = dividend.Symbol;
-            }
-            public IEnumerator<TimeSlice> GetEnumerator()
-            {
-                var dataFeedPacket = new DataFeedPacket(_algorithm.Securities[_symbol],
-                    _algorithm.SubscriptionManager.Subscriptions.First(s => s.Symbol == _symbol),
-                    new List<BaseData> {_dividend}, Ref.CreateReadOnly(() => false));
-
-                yield return TimeSlice.Create(DateTime.UtcNow,
-                    TimeZones.NewYork,
-                    _algorithm.Portfolio.CashBook,
-                    new List<DataFeedPacket> {dataFeedPacket},
-                    SecurityChanges.None,
-                    new Dictionary<Universe, BaseDataCollection>()
-                );
-            }
-
-            IEnumerator IEnumerable.GetEnumerator()
-            {
-                return GetEnumerator();
-            }
-
             public IEnumerable<Subscription> Subscriptions => new List<Subscription>();
             public bool IsActive => true;
 
@@ -169,10 +141,11 @@ namespace QuantConnect.Tests.Brokerages.Paper
                 IMapFileProvider mapFileProvider,
                 IFactorFileProvider factorFileProvider,
                 IDataProvider dataProvider,
-                IDataFeedSubscriptionManager subscriptionManager
+                IDataFeedSubscriptionManager subscriptionManager,
+                IDataFeedTimeProvider dataFeedTimeProvider
                 )
             {
-                throw new System.NotImplementedException();
+                throw new NotImplementedException();
             }
 
             public bool AddSubscription(SubscriptionRequest request)
@@ -193,6 +166,35 @@ namespace QuantConnect.Tests.Brokerages.Paper
             public void Exit()
             {
                 throw new System.NotImplementedException();
+            }
+        }
+
+        class NullSynchronizer : ISynchronizer
+        {
+            private readonly IAlgorithm _algorithm;
+            private readonly Dividend _dividend;
+            private readonly Symbol _symbol;
+
+            public NullSynchronizer(IAlgorithm algorithm, Dividend dividend)
+            {
+                _algorithm = algorithm;
+                _dividend = dividend;
+                _symbol = dividend.Symbol;
+            }
+
+            public IEnumerable<TimeSlice> StreamData(CancellationToken cancellationToken)
+            {
+                var dataFeedPacket = new DataFeedPacket(_algorithm.Securities[_symbol],
+                    _algorithm.SubscriptionManager.Subscriptions.First(s => s.Symbol == _symbol),
+                    new List<BaseData> { _dividend }, Ref.CreateReadOnly(() => false));
+
+                yield return TimeSlice.Create(DateTime.UtcNow,
+                    TimeZones.NewYork,
+                    _algorithm.Portfolio.CashBook,
+                    new List<DataFeedPacket> { dataFeedPacket },
+                    SecurityChanges.None,
+                    new Dictionary<Universe, BaseDataCollection>()
+                );
             }
         }
     }

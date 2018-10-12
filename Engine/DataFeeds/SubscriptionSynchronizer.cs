@@ -25,12 +25,12 @@ namespace QuantConnect.Lean.Engine.DataFeeds
     /// <summary>
     /// Provides the ability to synchronize subscriptions into time slices
     /// </summary>
-    public class SubscriptionSynchronizer : ISubscriptionSynchronizer
+    public class SubscriptionSynchronizer : ISubscriptionSynchronizer, ITimeProvider
     {
-        private readonly ITimeProvider _timeProvider;
+        private ITimeProvider _timeProvider;
         private readonly CashBook _cashBook;
-        private readonly DateTimeZone _sliceTimeZone;
         private readonly UniverseSelection _universeSelection;
+        private ManualTimeProvider _frontierTimeProvider;
 
         /// <summary>
         /// Event fired when a subscription is finished
@@ -38,21 +38,36 @@ namespace QuantConnect.Lean.Engine.DataFeeds
         public event EventHandler<Subscription> SubscriptionFinished;
 
         /// <summary>
+        /// The time zone of the created slice object
+        /// </summary>
+        public DateTimeZone SliceTimeZone { get; set; }
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="SubscriptionSynchronizer"/> class
         /// </summary>
         /// <param name="universeSelection">The universe selection instance used to handle universe
         /// selection subscription output</param>
-        /// <param name="sliceTimeZone">The time zone of the created slice object</param>
         /// <param name="cashBook">The cash book, used for creating the cash book updates</param>
         /// <returns>A time slice for the specified frontier time</returns>
-        /// <param name="timeProvider">The time provider, used to obtain the current frontier UTC value.</param>
-        public SubscriptionSynchronizer(UniverseSelection universeSelection, DateTimeZone sliceTimeZone,
-                                        CashBook cashBook, ITimeProvider timeProvider)
+        public SubscriptionSynchronizer(UniverseSelection universeSelection,
+                                        CashBook cashBook)
         {
-            _timeProvider = timeProvider;
             _universeSelection = universeSelection;
-            _sliceTimeZone = sliceTimeZone;
             _cashBook = cashBook;
+        }
+
+        /// <summary>
+        /// Sets the time provider. If already set will throw.
+        /// </summary>
+        /// <param name="timeProvider">The time provider, used to obtain the current frontier UTC value.</param>
+        public void SetTimeProvider(ITimeProvider timeProvider)
+        {
+            if (_timeProvider != null)
+            {
+                throw new Exception("SubscriptionSynchronizer ITimeProvider can only be set once");
+            }
+            _timeProvider = timeProvider;
+            _frontierTimeProvider = new ManualTimeProvider(_timeProvider.GetUtcNow());
         }
 
         /// <summary>
@@ -68,7 +83,8 @@ namespace QuantConnect.Lean.Engine.DataFeeds
             var universeData = new Dictionary<Universe, BaseDataCollection>();
             var universeDataForTimeSliceCreate = new Dictionary<Universe, BaseDataCollection>();
 
-            var frontierUtc = _timeProvider.GetUtcNow();
+            _frontierTimeProvider.SetCurrentTimeUtc(_timeProvider.GetUtcNow());
+            var frontierUtc = _frontierTimeProvider.GetUtcNow();
 
             SecurityChanges newChanges;
             do
@@ -168,7 +184,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
             }
             while (newChanges != SecurityChanges.None);
 
-            var timeSlice = TimeSlice.Create(frontierUtc, _sliceTimeZone, _cashBook, data, changes, universeDataForTimeSliceCreate);
+            var timeSlice = TimeSlice.Create(frontierUtc, SliceTimeZone, _cashBook, data, changes, universeDataForTimeSliceCreate);
 
             return timeSlice;
         }
@@ -180,6 +196,14 @@ namespace QuantConnect.Lean.Engine.DataFeeds
         {
             var handler = SubscriptionFinished;
             if (handler != null) handler(this, subscription);
+        }
+
+        /// <summary>
+        /// Returns the current UTC frontier time
+        /// </summary>
+        public DateTime GetUtcNow()
+        {
+            return _frontierTimeProvider.GetUtcNow();
         }
     }
 }
